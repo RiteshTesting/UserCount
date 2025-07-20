@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>EMP Counter Tool</title>
+  <script src="https://cdn.sheetjs.com/xlsx-0.19.3/package/dist/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
+    h2 { color: #2c3e50; text-align: center; }
+    .container { background: #f9f9f9; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    button, input { margin: 10px 0; padding: 10px 15px; font-size: 16px; width: 100%; }
+    button { background: #4CAF50; color: white; border: none; cursor: pointer; }
+    button:hover { background: #45a049; }
+    #status { margin-top: 10px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>📊 EMP Counter Tool</h2>
+    <input type="file" id="excelInput" accept=".xlsx,.xls" />
+    <button onclick="generateReport()">Generate Excel Report</button>
+    <div id="status"></div>
+  </div>
+
+  <script>
+    async function generateReport() {
+      const file = document.getElementById("excelInput").files[0];
+      const statusEl = document.getElementById("status");
+      if (!file) {
+        statusEl.textContent = "⚠️ Please select an Excel file first";
+        return;
+      }
+
+      statusEl.textContent = "⏳ Processing file...";
+      
+      try {
+        const { summaryData, individualData } = await processFile(file);
+        await exportExcel(summaryData, individualData);
+        statusEl.textContent = "✅ Report generated successfully!";
+      } catch (error) {
+        console.error("Error:", error);
+        statusEl.textContent = `❌ Error: ${error.message}`;
+      }
+    }
+
+    async function processFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+          try {
+            const wb = XLSX.read(e.target.result, { type: "binary" });
+            const sheet = wb.Sheets[wb.SheetNames[0]];
+            const rawData = XLSX.utils.sheet_to_json(sheet);
+
+            const fields = [
+              "USERID", "P1MASTER", "P2MASTER", "COMPMASTER", "ImagewiseQC Master",
+              "P1NAME", "P2NAME", "COMPNAME", "ImagewiseQC Name",
+              "P1L", "P2L", "COMPLEGAL", "ImagewiseQC Legal"
+            ];
+
+            // Process and group data for summary sheet
+            const grouped = {};
+            rawData.forEach(row => {
+              const id = row["USERID"]?.toString().trim();
+              if (!id) return;
+              
+              if (!grouped[id]) {
+                grouped[id] = { USERID: id };
+                fields.slice(1).forEach(f => grouped[id][f] = 0);
+              }
+              
+              fields.slice(1).forEach(f => {
+                const val = parseFloat(row[f]) || 0;
+                grouped[id][f] += val;
+              });
+            });
+
+            // Sort and prepare summary output
+            const sortedRows = Object.values(grouped).sort((a, b) => 
+              a.USERID.localeCompare(b.USERID, undefined, { numeric: true })
+            );
+
+            // Add TOTAL column to summary (Column N)
+            const summaryData = [fields.concat("TOTAL")];
+            sortedRows.forEach(entry => {
+              const rowValues = fields.map(f => entry[f] || 0);
+              const total = rowValues.slice(1).reduce((sum, val) => sum + (Number(val) || 0), 0);
+              summaryData.push(rowValues.concat(total));
+            });
+
+            // Predefined EMP Names for Individual Counts sheet with blank rows
+            const empGroups = [
+              ["Priyesh Jain", "Pratima Khakre", "Sonali Chadokar", "Devika Sable"],
+              ["Ritesh Sable", "Balram Bisar", "Preeti Deshmukh", "Bhagyashri Chadokar",
+               "Diksha Thoke", "Kiran Mokalkar", "Seema Dhurve", "Pratiksha Dange",
+               "Poonam Baraskar", "Prachi Jain", "Lalita Varkade", "Shivani Gaikwad"],
+              ["Aarti Mahski", "Neeraj Dhurve", "Ritika Denge", "Archana Wadiwa",
+               "Sukhvanti Uikey", "Sneha Malviya", "Ganeshi Dhurve", "Bhawna Khobre"],
+              ["Kanchi Bankar", "Manisha Evane", "Vandana Nagle", "Divya Dounde",
+               "Pusplata Dounde", "Shivani Dhote", "Shalu Likhitkar", "Monika Malviya",
+               "Chakori Gavhade", "Kallo Irpache", "Beena Uikey", "Seema Kushwaha"],
+              ["Shilpi Dawande", "Nikita Dhadse", "Kajal Pandagre", "Priya Satpute",
+               "Nagma Khan", "Shweta Kumbhare", "Rakhi Thoke", "Divya Lokhande",
+               "Minakshi Galfat"]
+            ];
+
+            // Prepare individual count sheet
+            const individualHeaders = ["EMP Name", "Total Count"];
+            const individualData = [individualHeaders];
+            
+            // Add EMP names with blank rows between groups
+            empGroups.forEach((group, groupIndex) => {
+              group.forEach(name => {
+                individualData.push([
+                  name, 
+                  { f: `=SUMIF('EMP Summary'!A:A,A${individualData.length+1},'EMP Summary'!N:N)` }
+                ]);
+              });
+              
+              // Add blank row after each group except the last one
+              if (groupIndex < empGroups.length - 1) {
+                individualData.push(["", 0]); // Blank row with 0 in total count
+              }
+            });
+
+            // Extend formulas down to row 200
+            for (let i = individualData.length; i <= 200; i++) {
+              individualData.push([
+                "", 
+                { f: `=IF(A${i+1}<>"",SUMIF('EMP Summary'!A:A,A${i+1},'EMP Summary'!N:N),0)` }
+              ]);
+            }
+
+            resolve({ summaryData, individualData });
+          } catch (error) {
+            reject(error);
+          }
+        };
+        reader.onerror = () => reject(new Error("Error reading file"));
+        reader.readAsBinaryString(file);
+      });
+    }
+
+    async function exportExcel(summaryData, individualData) {
+      const wb = XLSX.utils.book_new();
+      
+      // Create Summary Sheet with styling
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+      applyStyling(wsSummary);
+      XLSX.utils.book_append_sheet(wb, wsSummary, "EMP Summary");
+      
+      // Create Individual Count Sheet with styling
+      const wsIndividual = XLSX.utils.aoa_to_sheet(individualData);
+      applyStyling(wsIndividual);
+      XLSX.utils.book_append_sheet(wb, wsIndividual, "Individual Counts");
+      
+      // Add defined name for easier formula reference
+      if (!wb.Workbook) wb.Workbook = {};
+      if (!wb.Workbook.Names) wb.Workbook.Names = [];
+      wb.Workbook.Names.push({
+        Name: "EmpData",
+        Ref: "'EMP Summary'!$A$2:$N$" + (summaryData.length)
+      });
+
+      // Generate filename with current date in DD-MM-YYYY and time in 24hr format
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const year = now.getFullYear();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const filename = `EMP Count ${day}-${month}-${year} ${hours}${minutes}.xlsx`;
+
+      if (window.showSaveFilePicker) {
+        const blob = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
+        const handle = await window.showSaveFilePicker({
+          suggestedName: filename,
+          types: [{
+            description: "Excel Files",
+            accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else {
+        XLSX.writeFile(wb, filename);
+      }
+    }
+
+    function applyStyling(ws) {
+      const range = XLSX.utils.decode_range(ws["!ref"]);
+      for (let R = range.s.r; R <= range.e.r; ++R) {
+        for (let C = range.s.c; C <= range.e.c; ++C) {
+          const addr = XLSX.utils.encode_cell({ r: R, c: C });
+          if (!ws[addr]) ws[addr] = { v: "" };
+          
+          ws[addr].s = {
+            alignment: { horizontal: "center", vertical: "center" },
+            border: {
+              top: { style: "thin", color: { rgb: "000000" } },
+              bottom: { style: "thin", color: { rgb: "000000" } },
+              left: { style: "thin", color: { rgb: "000000" } },
+              right: { style: "thin", color: { rgb: "000000" } }
+            },
+            font: R === 0 ? { bold: true } : {}
+          };
+        }
+      }
+    }
+  </script>
+</body>
+</html>
